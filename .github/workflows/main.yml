@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Java 17
@@ -20,111 +20,107 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Gradle
+      - name: Setup Gradle 8.10
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.7'
+          gradle-version: '8.10'
 
-      - name: Find and extract NOVA Browser ZIP
+      - name: Extract project
         shell: bash
         run: |
-          set -e
-
-          echo "=== Repository files ==="
-          find . -maxdepth 3 -type f | sort
-
-          ZIP_FILE=$(find . -type f -name "*.zip" \
-            ! -path "./.git/*" \
-            | head -n 1)
-
-          if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: No ZIP file found."
-            exit 1
-          fi
-
-          echo "ZIP found: $ZIP_FILE"
+          set -eux
 
           mkdir -p extracted
-          unzip -o "$ZIP_FILE" -d extracted
 
-          echo "=== Extracted files ==="
-          find extracted -maxdepth 5 -type f | sort
+          ZIP_FILE=$(find . -type f -name "*.zip" \
+            ! -path "./.git/*" | head -n 1)
 
-      - name: Locate Android Gradle project
-        shell: bash
-        run: |
-          set -e
-
-          PROJECT_DIR=$(find extracted -type f \
-            \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
-            -printf '%h\n' | head -n 1)
-
-          if [ -z "$PROJECT_DIR" ]; then
-            echo "ERROR: Android Gradle project not found."
-            echo "settings.gradle or settings.gradle.kts is missing."
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: ZIP file not found."
             exit 1
           fi
 
-          echo "Android project found:"
-          echo "$PROJECT_DIR"
+          echo "ZIP: $ZIP_FILE"
+          unzip -o "$ZIP_FILE" -d extracted
+
+      - name: Find Android project
+        shell: bash
+        run: |
+          set -eux
+
+          SETTINGS=$(find extracted -type f \
+            \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
+            | head -n 1)
+
+          if [ -z "$SETTINGS" ]; then
+            echo "ERROR: settings.gradle not found."
+            find extracted -maxdepth 5 -type f
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$SETTINGS")
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-      - name: Verify Android project
+          echo "Android project:"
+          echo "$PROJECT_DIR"
+
+      - name: Check project
         shell: bash
         run: |
-          set -e
-
-          echo "=== Project directory ==="
-          find "$PROJECT_DIR" -maxdepth 4 -type f | sort
-
-          echo "=== settings.gradle ==="
-          if [ -f "$PROJECT_DIR/settings.gradle" ]; then
-            cat "$PROJECT_DIR/settings.gradle"
-          elif [ -f "$PROJECT_DIR/settings.gradle.kts" ]; then
-            cat "$PROJECT_DIR/settings.gradle.kts"
-          fi
-
-          if [ ! -f "$PROJECT_DIR/app/build.gradle" ] &&
-             [ ! -f "$PROJECT_DIR/app/build.gradle.kts" ]; then
-            echo "ERROR: app/build.gradle or app/build.gradle.kts not found."
-            exit 1
-          fi
-
-      - name: Build Debug APK
-        shell: bash
-        run: |
-          set -e
+          set -eux
 
           cd "$PROJECT_DIR"
 
-          echo "=== Gradle version ==="
+          echo "=== PROJECT ==="
+          pwd
+
+          echo "=== FILES ==="
+          find . -maxdepth 4 -type f | sort
+
+          echo "=== SETTINGS ==="
+          cat settings.gradle 2>/dev/null || cat settings.gradle.kts
+
+          echo "=== APP BUILD ==="
+          cat app/build.gradle 2>/dev/null || cat app/build.gradle.kts
+
+      - name: Check Java and Gradle
+        shell: bash
+        run: |
+          java -version
           gradle --version
 
-          echo "=== Building NOVA Browser ==="
+      - name: Build APK
+        shell: bash
+        run: |
+          set -eux
+
+          cd "$PROJECT_DIR"
+
           gradle :app:assembleDebug \
             --no-daemon \
-            --stacktrace
+            --stacktrace \
+            --info
 
       - name: Find APK
         shell: bash
         run: |
-          set -e
+          set -eux
 
-          echo "=== APK files ==="
-          find "$PROJECT_DIR" -type f -name "*.apk" -print
+          find "$PROJECT_DIR" \
+            -type f \
+            -name "*.apk" \
+            -print
 
-          APK=$(find "$PROJECT_DIR" -type f \
+          APK=$(find "$PROJECT_DIR" \
+            -type f \
             -name "*.apk" \
             | head -n 1)
 
           if [ -z "$APK" ]; then
-            echo "ERROR: APK was not generated."
+            echo "ERROR: APK not generated."
             exit 1
           fi
-
-          echo "APK found:"
-          echo "$APK"
 
           mkdir -p release
           cp "$APK" release/NOVA-Browser-debug.apk
